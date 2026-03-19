@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Krypta Joannitów</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;width:100vw;height:100vh;overflow:hidden}
+canvas{display:block}
+#title{position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  color:#c0a060;font-family:'Palatino Linotype',serif;font-size:13px;
+  letter-spacing:8px;text-transform:uppercase;
+  text-shadow:0 0 28px #c0800044;white-space:nowrap;
+  opacity:0;animation:fin 2.5s ease 1s forwards}
+#sub{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+  color:#2e2010;font-family:'Palatino Linotype',serif;font-size:9px;
+  letter-spacing:6px;opacity:0;animation:fin 2s ease 3s forwards}
+#hud{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:5px;height:5px;border-radius:50%;background:rgba(180,140,80,0.45);pointer-events:none}
+#info{position:absolute;bottom:36px;left:50%;transform:translateX(-50%);
+  color:#2e1e08;font-family:'Palatino Linotype',serif;font-size:9px;
+  letter-spacing:4px;opacity:0;animation:fin 2s ease 3s forwards;white-space:nowrap}
+@keyframes fin{to{opacity:1}}
+</style>
+</head>
+<body>
+<div id="title">✦ &nbsp; K R Y P T A &nbsp; J O A N N I T Ó W &nbsp; ✦</div>
+<div id="sub">Zakon Świętego Jana · Jerozolima · XII wiek</div>
+<div id="hud"></div>
+<div id="info">W/S/A/D — ruch &nbsp;·&nbsp; Q/E / ←→ — obrót &nbsp;·&nbsp; SPACJA — skok</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+try {
+
+// ══ RENDERER ════════════════════════════════════════
+var renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = false;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02020a);
+scene.fog = new THREE.Fog(0x02020a, 10, 26);
+
+var camera = new THREE.PerspectiveCamera(68, innerWidth/innerHeight, 0.04, 60);
+
+// ══ KEYS ════════════════════════════════════════════
+var keys={};
+document.addEventListener('keydown',function(e){keys[e.code]=true;});
+document.addEventListener('keyup',  function(e){keys[e.code]=false;});
+var yaw=0, pitch=0;
+var playerX=0, playerZ=10, SPEED=3.2;
+var camBob=0, stepT=0, footT=0.3;
+var playerY=0, velY=0, onGround=true;
+var GRAVITY=-18, JUMP_V=6.2;
+document.addEventListener('keydown',function(e){
+  if(e.code==='Space' && onGround){velY=JUMP_V; onGround=false;}
+});
+var velY=0, groundY=0, onGround=true, GRAVITY=-18, JUMP_V=6.5;
+
+// ══ TEXTURES (3) ════════════════════════════════════
+function makeTex(w,h,fn){
+  var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  fn(cv.getContext('2d'),w,h);
+  var t=new THREE.CanvasTexture(cv);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return t;
+}
+
+// Crusader ashlar — Jerusalem limestone, warm cream-gold
+var stoneTex = makeTex(512,512,function(ctx,w,h){
+  ctx.fillStyle='#1a1508'; ctx.fillRect(0,0,w,h);
+  var courses=[30,28,32,26,34,28,30,26,32,30];
+  var y=0,row=0;
+  while(y<h){
+    var bh=courses[row%courses.length];
+    var xo=(row%2)*58, x=-xo;
+    while(x<w){
+      var bw=55+Math.floor(Math.random()*38);
+      var v=0.58+Math.random()*0.52;
+      // Warm Jerusalem limestone — cream/honey
+      var r=Math.floor(48*v),g=Math.floor(40*v),b=Math.floor(24*v);
+      ctx.fillStyle='rgb('+r+','+g+','+b+')';
+      ctx.fillRect(x+2,y+2,bw-3,bh-3);
+      // Mortar
+      ctx.fillStyle='rgba(5,4,2,0.88)';
+      ctx.fillRect(x,y,bw,2); ctx.fillRect(x,y,2,bh);
+      // Chisel marks
+      if(Math.random()<0.6){
+        ctx.strokeStyle='rgba('+(r-8)+','+(g-8)+','+(b-4)+',0.4)';
+        ctx.lineWidth=0.5;
+        ctx.beginPath();
+        var lx=x+4+Math.random()*(bw-8);
+        ctx.moveTo(lx,y+3); ctx.lineTo(lx+(Math.random()-0.5)*12,y+bh-3);
+        ctx.stroke();
+      }
+      x+=bw;
+    }
+    y+=bh; row++;
+  }
+  // Soot / torch stains
+  for(var so=0;so<12;so++){
+    var sg=ctx.createRadialGradient(Math.random()*w,Math.random()*h,0,
+      Math.random()*w,Math.random()*h,15+Math.random()*40);
+    sg.addColorStop(0,'rgba(4,3,2,0.35)'); sg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=sg; ctx.fillRect(0,0,w,h);
+  }
+  // Faint crosses scratched in walls
+  ctx.strokeStyle='rgba(180,140,60,0.06)'; ctx.lineWidth=1.5;
+  for(var cr=0;cr<6;cr++){
+    var cx2=40+Math.random()*(w-80), cy2=40+Math.random()*(h-80), cs=8+Math.random()*14;
+    ctx.beginPath(); ctx.moveTo(cx2,cy2-cs); ctx.lineTo(cx2,cy2+cs);
+    ctx.moveTo(cx2-cs*0.6,cy2-cs*0.2); ctx.lineTo(cx2+cs*0.6,cy2-cs*0.2);
+    ctx.stroke();
+  }
+});
+stoneTex.repeat.set(2.2,1.6);
+
+// Floor — worn stone slabs with engraved effigies
+var floorTex = makeTex(512,512,function(ctx,w,h){
+  ctx.fillStyle='#120e08'; ctx.fillRect(0,0,w,h);
+  var ts=96;
+  for(var row=0;row<Math.ceil(h/ts)+1;row++){
+    for(var col=0;col<Math.ceil(w/ts)+1;col++){
+      var x=col*ts, y=row*ts;
+      var v=0.52+Math.random()*0.42;
+      ctx.fillStyle='rgb('+Math.floor(38*v)+','+Math.floor(31*v)+','+Math.floor(18*v)+')';
+      ctx.fillRect(x+2,y+2,ts-3,ts-3);
+      ctx.fillStyle='rgba(4,3,1,0.9)';
+      ctx.fillRect(x,y,ts,2); ctx.fillRect(x,y,2,ts);
+      // Engraved cross on some slabs
+      if(Math.random()<0.25){
+        var cx3=x+ts/2, cy3=y+ts/2, cl=ts*0.28;
+        ctx.strokeStyle='rgba(60,48,28,0.5)'; ctx.lineWidth=2;
+        ctx.beginPath();
+        ctx.moveTo(cx3,cy3-cl); ctx.lineTo(cx3,cy3+cl);
+        ctx.moveTo(cx3-cl*0.55,cy3-cl*0.15); ctx.lineTo(cx3+cl*0.55,cy3-cl*0.15);
+        ctx.stroke();
+        // Circular medallion
+        ctx.beginPath(); ctx.arc(cx3,cy3,cl*0.65,0,Math.PI*2);
+        ctx.strokeStyle='rgba(50,40,22,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
+      }
+    }
+  }
+  // Grime
+  for(var d=0;d<16;d++){
+    var dg=ctx.createRadialGradient(Math.random()*w,Math.random()*h,0,
+      Math.random()*w,Math.random()*h,12+Math.random()*35);
+    dg.addColorStop(0,'rgba(0,0,0,'+(0.08+Math.random()*0.18)+')');
+    dg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=dg; ctx.fillRect(0,0,w,h);
+  }
+});
+floorTex.repeat.set(5,5);
+
+// Marble sarcophagus — polished pale stone
+var marbleTex = makeTex(256,256,function(ctx,w,h){
+  var g=ctx.createLinearGradient(0,0,w,h);
+  g.addColorStop(0,'#2a2820'); g.addColorStop(0.5,'#383428'); g.addColorStop(1,'#2c2a1e');
+  ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  // Marble veins
+  for(var v=0;v<18;v++){
+    ctx.beginPath();
+    var vx=Math.random()*w, vy=Math.random()*h;
+    ctx.moveTo(vx,vy);
+    for(var vs=0;vs<5;vs++){vx+=(Math.random()-0.5)*40;vy+=(Math.random()-0.5)*30;ctx.lineTo(vx,vy);}
+    ctx.strokeStyle='rgba('+(70+Math.random()*40)+','+(60+Math.random()*30)+','+(40+Math.random()*20)+','+(0.12+Math.random()*0.18)+')';
+    ctx.lineWidth=0.4+Math.random()*1.2; ctx.stroke();
+  }
+  // Sheen
+  var sg=ctx.createLinearGradient(0,0,w*0.6,h*0.4);
+  sg.addColorStop(0,'rgba(80,70,50,0.15)'); sg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=sg; ctx.fillRect(0,0,w,h);
+});
+
+// ══ MATERIALS (6 max) ═══════════════════════════════
+var matStone  = new THREE.MeshStandardMaterial({map:stoneTex,  color:0x907858, roughness:0.94,metalness:0.03});
+var matFloor  = new THREE.MeshStandardMaterial({map:floorTex,  color:0x584028, roughness:0.96,metalness:0.02});
+var matMarble = new THREE.MeshStandardMaterial({map:marbleTex, color:0x706050, roughness:0.35,metalness:0.18});
+var matGold   = new THREE.MeshStandardMaterial({color:0xc89820, roughness:0.15,metalness:0.98});
+var matFlame  = new THREE.MeshStandardMaterial({color:0xffcc60, emissive:0xff8800, emissiveIntensity:2.8, roughness:0.3, transparent:true, opacity:0.9});
+var matIron   = new THREE.MeshStandardMaterial({color:0x2a2820, roughness:0.45,metalness:0.92});
+
+// ══ ROOM: twin-naved Romanesque crypt ═══════════════
+// Two parallel barrel-vaulted naves, 7×18m each, shared central pillar row
+var NAVE_W=5.0, NAVE_D=18, RH=4.2, VH=1.6;
+
+// Floor — two naves + crossing
+var floor=new THREE.Mesh(new THREE.PlaneGeometry(NAVE_W*2+1.2, NAVE_D), matFloor);
+floor.rotation.x=-Math.PI/2; scene.add(floor);
+
+// Walls — outer
+function addWall(w2,h2,px,py,pz,ry){
+  var m=new THREE.Mesh(new THREE.PlaneGeometry(w2,h2),matStone);
+  m.position.set(px,py,pz); m.rotation.y=ry; scene.add(m);
+}
+var TW=RH+VH; // total wall height to vault crown
+// Outer left
+addWall(NAVE_D,TW, -(NAVE_W+0.6),TW/2,0, Math.PI/2);
+// Outer right
+addWall(NAVE_D,TW,  (NAVE_W+0.6),TW/2,0,-Math.PI/2);
+// End walls
+addWall(NAVE_W*2+1.2,TW, 0,TW/2,-NAVE_D/2, 0);
+addWall(NAVE_W*2+1.2,TW, 0,TW/2,  NAVE_D/2, Math.PI);
+
+// Central wall with archway openings
+var archMat=matStone;
+// Central dividing wall — segments between arches
+for(var az=-7;az<=7;az+=3.5){
+  // Pillar/wall pier between arches
+  var pier=new THREE.Mesh(new THREE.BoxGeometry(0.55,TW,0.55),matStone);
+  pier.position.set(0,TW/2,az); scene.add(pier);
+}
+
+// Barrel vaults — left nave
+var VSEG=14;
+for(var vi=0;vi<VSEG;vi++){
+  var a1=(vi/VSEG)*Math.PI, a2=((vi+1)/VSEG)*Math.PI;
+  var y1=RH+Math.sin(a1)*VH, x1=Math.cos(a1)*NAVE_W*0.5;
+  var y2=RH+Math.sin(a2)*VH, x2=Math.cos(a2)*NAVE_W*0.5;
+  var cx=(x1+x2)/2-NAVE_W*0.5-0.6, cy=(y1+y2)/2;
+  var sw=Math.sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
+  var ang=Math.atan2(y2-y1,x2-x1);
+  var seg=new THREE.Mesh(new THREE.BoxGeometry(sw+0.02,0.1,NAVE_D),matStone);
+  seg.position.set(cx,cy,0); seg.rotation.z=ang-Math.PI/2; scene.add(seg);
+}
+// Right nave vault
+for(var vi2=0;vi2<VSEG;vi2++){
+  var a1b=(vi2/VSEG)*Math.PI, a2b=((vi2+1)/VSEG)*Math.PI;
+  var y1b=RH+Math.sin(a1b)*VH, x1b=Math.cos(a1b)*NAVE_W*0.5;
+  var y2b=RH+Math.sin(a2b)*VH, x2b=Math.cos(a2b)*NAVE_W*0.5;
+  var cxb=(x1b+x2b)/2+NAVE_W*0.5+0.6, cyb=(y1b+y2b)/2;
+  var swb=Math.sqrt((x2b-x1b)*(x2b-x1b)+(y2b-y1b)*(y2b-y1b));
+  var angb=Math.atan2(y2b-y1b,x2b-x1b);
+  var segb=new THREE.Mesh(new THREE.BoxGeometry(swb+0.02,0.1,NAVE_D),matStone);
+  segb.position.set(cxb,cyb,0); segb.rotation.z=angb-Math.PI/2; scene.add(segb);
+}
+
+// Transverse arch ribs every 3.5m
+var ribGeo=new THREE.BoxGeometry(0.24,0.28,0.24);
+for(var rz=-7;rz<=7;rz+=3.5){
+  // Left arch ribs
+  for(var ri=0;ri<=VSEG;ri++){
+    var ra=(ri/VSEG)*Math.PI;
+    var rrx=Math.cos(ra)*NAVE_W*0.5-NAVE_W*0.5-0.6;
+    var rry=RH+Math.sin(ra)*VH;
+    var rm=new THREE.Mesh(ribGeo,matStone);
+    rm.position.set(rrx,rry,rz); scene.add(rm);
+  }
+  // Right arch ribs
+  for(var ri2=0;ri2<=VSEG;ri2++){
+    var ra2=(ri2/VSEG)*Math.PI;
+    var rrx2=Math.cos(ra2)*NAVE_W*0.5+NAVE_W*0.5+0.6;
+    var rry2=RH+Math.sin(ra2)*VH;
+    var rm2=new THREE.Mesh(ribGeo,matStone);
+    rm2.position.set(rrx2,rry2,rz); scene.add(rm2);
+  }
+}
+
+// Columns — left nave inner row
+var colGeo=new THREE.CylinderGeometry(0.22,0.26,RH,10);
+var capGeo=new THREE.BoxGeometry(0.62,0.22,0.62);
+var baseGeo=new THREE.BoxGeometry(0.58,0.18,0.58);
+for(var cz=-7;cz<=7;cz+=3.5){
+  // Left inner column
+  var col=new THREE.Mesh(colGeo,matStone);
+  col.position.set(-0.6,RH/2,cz); scene.add(col);
+  var cap=new THREE.Mesh(capGeo,matStone); cap.position.set(-0.6,RH,cz); scene.add(cap);
+  var base=new THREE.Mesh(baseGeo,matStone); base.position.set(-0.6,0.09,cz); scene.add(base);
+  // Right inner column
+  var col2=new THREE.Mesh(colGeo,matStone);
+  col2.position.set(0.6,RH/2,cz); scene.add(col2);
+  var cap2=new THREE.Mesh(capGeo,matStone); cap2.position.set(0.6,RH,cz); scene.add(cap2);
+  var base2=new THREE.Mesh(baseGeo,matStone); base2.position.set(0.6,0.09,cz); scene.add(base2);
+}
+
+// ══ SARCOPHAGI ═══════════════════════════════════════
+// Grand tombs of Hospitaller knights — carved stone effigies
+// Sarcophagi upright against outer walls
+// [x, z, rotY] — standing against left/right walls
+var sarcData=[
+  [-5.28, -5.5, Math.PI/2],
+  [-5.28,  0.0, Math.PI/2],
+  [-5.28,  5.5, Math.PI/2],
+  [ 5.28, -5.5,-Math.PI/2],
+  [ 5.28,  0.0,-Math.PI/2],
+  [ 5.28,  5.5,-Math.PI/2],
+];
+var sarcGeo=new THREE.BoxGeometry(0.9, 0.6, 2.2);
+var lidGeo =new THREE.BoxGeometry(0.92,0.14,2.22);
+// Sloped lid
+var lidSlope=new THREE.BoxGeometry(0.88,0.28,2.18);
+
+sarcData.forEach(function(sd){
+  var g=new THREE.Group();
+  // Upright sarcophagus — leaning against wall, slightly tilted back
+  g.position.set(sd[0], 0, sd[1]);
+  g.rotation.y=sd[2];
+
+  // Main box — upright, raised off floor
+  var box=new THREE.Mesh(
+    new THREE.BoxGeometry(0.72,2.1,0.38), matMarble);
+  box.position.set(0,1.05,0); g.add(box);
+
+  // Arched lid — top
+  var arch=new THREE.Mesh(
+    new THREE.CylinderGeometry(0.36,0.36,0.38,10,1,false,0,Math.PI),matMarble);
+  arch.rotation.z=Math.PI/2; arch.rotation.y=Math.PI/2;
+  arch.position.set(0,2.15,0); g.add(arch);
+
+  // Base plinth
+  var plinth=new THREE.Mesh(new THREE.BoxGeometry(0.82,0.14,0.48),matMarble);
+  plinth.position.set(0,0.07,0); g.add(plinth);
+
+  // Engraved effigy on front face — just relief lines
+  // Head circle
+  var efHead=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.09,0.02,12),matStone);
+  efHead.rotation.x=Math.PI/2; efHead.position.set(0,1.72,0.2); g.add(efHead);
+  // Torso panel
+  var efBody=new THREE.Mesh(new THREE.BoxGeometry(0.36,0.65,0.02),matStone);
+  efBody.position.set(0,1.22,0.2); g.add(efBody);
+  // Crossed arms
+  var armL=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.06,0.02),matStone);
+  armL.position.set(-0.06,1.42,0.21); armL.rotation.z=0.25; g.add(armL);
+  var armR=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.06,0.02),matStone);
+  armR.position.set( 0.06,1.42,0.21); armR.rotation.z=-0.25; g.add(armR);
+  // Legs panel
+  var efLegs=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.5,0.02),matStone);
+  efLegs.position.set(0,0.68,0.2); g.add(efLegs);
+
+  // Hospitaller cross relief
+  var rcV2=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.32,0.025),matGold);
+  rcV2.position.set(0,1.28,0.21); g.add(rcV2);
+  var rcH2=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.05,0.025),matGold);
+  rcH2.position.set(0,1.38,0.21); g.add(rcH2);
+
+  // Latin inscription panel at bottom
+  var insc=new THREE.Mesh(new THREE.BoxGeometry(0.55,0.18,0.025),matStone);
+  insc.position.set(0,0.25,0.2); g.add(insc);
+
+  scene.add(g);
+});
+
+var candleLights=[];
+// ══ ALTAR at far end ═════════════════════════════════
+var altarG=new THREE.Group();
+altarG.position.set(0,0,-NAVE_D/2+1.8);
+// Base
+var altarBase=new THREE.Mesh(new THREE.BoxGeometry(2.8,1.0,0.9),matMarble);
+altarBase.position.y=0.5; altarG.add(altarBase);
+// Mensa (top slab)
+var mensa=new THREE.Mesh(new THREE.BoxGeometry(2.9,0.1,1.0),matMarble);
+mensa.position.y=1.05; altarG.add(mensa);
+// Reredos (back panel)
+var reredos=new THREE.Mesh(new THREE.BoxGeometry(2.8,1.8,0.12),matStone);
+reredos.position.set(0,1.95,-0.4); altarG.add(reredos);
+// Central cross on reredos
+var rcV=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.75,0.14),matGold);
+rcV.position.set(0,2.3,-0.34); altarG.add(rcV);
+var rcH=new THREE.Mesh(new THREE.BoxGeometry(0.55,0.12,0.14),matGold);
+rcH.position.set(0,2.55,-0.34); altarG.add(rcH);
+// Eight-pointed Hospitaller cross (simplified)
+[-0.35,0.35].forEach(function(ox){
+  var arm=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.1,0.14),matGold);
+  arm.position.set(ox,2.55,-0.34); altarG.add(arm);
+  // Notched tips
+  [-1,1].forEach(function(dir){
+    var tip=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.14,0.14),matGold);
+    tip.position.set(ox+dir*0.08,2.6,-0.34); altarG.add(tip);
+  });
+});
+// Candelabra on altar
+[-1.0,0,1.0].forEach(function(cx4){
+  var cStick=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.04,0.45,8),matGold);
+  cStick.position.set(cx4,1.27,-0.1); altarG.add(cStick);
+  var cTop=new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.025,0.08,8),matGold);
+  cTop.position.set(cx4,1.52,-0.1); altarG.add(cTop);
+  var cCandle=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.034,0.32,8),
+    matMarble);
+  cCandle.position.set(cx4,1.72,-0.1); altarG.add(cCandle);
+  var cFlame=new THREE.Mesh(new THREE.ConeGeometry(0.028,0.1,7),matFlame);
+  cFlame.position.set(cx4,1.9,-0.1); altarG.add(cFlame);
+  var cL=new THREE.PointLight(0xffcc60,0,5,2.2);
+  cL.position.set(cx4,1.95,-0.1+altarG.position.z);
+  scene.add(cL);
+  candleLights.push({L:cL,base:2.5+Math.random()*1.5,ph:Math.random()*Math.PI*2});
+});
+scene.add(altarG);
+
+// ══ WALL TORCHES ════════════════════════════════════
+var shaftGeo=new THREE.CylinderGeometry(0.04,0.05,0.48,8);
+var cupGeo  =new THREE.CylinderGeometry(0.075,0.05,0.1,10);
+var flmGeo  =new THREE.ConeGeometry(0.07,0.24,8);
+
+// Place torches on left+right outer walls
+[[-6,-3,0,3,6]].forEach(function(zz){
+  zz.forEach(function(tz){
+    // Left wall
+    [[-NAVE_W-0.45, tz, -Math.PI/2],[NAVE_W+0.45, tz, Math.PI/2]].forEach(function(tp){
+      var tg=new THREE.Group();
+      tg.position.set(tp[0],2.4,tp[1]); tg.rotation.y=tp[2];
+      var shaft=new THREE.Mesh(shaftGeo,matIron); shaft.rotation.x=Math.PI/2; shaft.position.z=0.1; tg.add(shaft);
+      var cup=new THREE.Mesh(cupGeo,matIron); cup.rotation.x=Math.PI/2; cup.position.z=0.35; tg.add(cup);
+      var fl=new THREE.Mesh(flmGeo,matFlame); fl.rotation.x=Math.PI/2; fl.position.z=0.5; tg.add(fl);
+      scene.add(tg);
+      var ptL=new THREE.PointLight(0xffaa40,0,9,2);
+      ptL.position.set(tp[0],2.6,tp[1]);
+      scene.add(ptL);
+      candleLights.push({L:ptL,fl:fl,base:4+Math.random()*3,ph:Math.random()*Math.PI*2});
+    });
+  });
+});
+
+// ══ WALL NICHES with reliquaries ═════════════════════
+var nicheData=[[-NAVE_W-0.3,-8],[-NAVE_W-0.3,8],[NAVE_W+0.3,-8],[NAVE_W+0.3,8]];
+nicheData.forEach(function(nd){
+  // Niche recess
+  var niche=new THREE.Mesh(new THREE.BoxGeometry(0.35,0.9,0.75),
+    matFloor);
+  niche.position.set(nd[0],1.3,nd[1]);
+  niche.rotation.y=nd[0]<0?-Math.PI/2:Math.PI/2;
+  scene.add(niche);
+  // Reliquary box (small gilded chest)
+  var rBox=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.22,0.28),matGold);
+  rBox.position.set(nd[0]+(nd[0]<0?0.1:-0.1),0.9,nd[1]); scene.add(rBox);
+  var rLid=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.06,0.3),matGold);
+  rLid.position.set(nd[0]+(nd[0]<0?0.1:-0.1),1.02,nd[1]); scene.add(rLid);
+  // Glow
+  var rL=new THREE.PointLight(0xffdd60,1.5,3,2.5);
+  rL.position.set(nd[0]+(nd[0]<0?0.2:-0.2),1.2,nd[1]); scene.add(rL);
+  candleLights.push({L:rL,fl:null,base:1.5,ph:Math.random()*Math.PI*2});
+});
+
+// ══ FLOOR TOMB SLABS with Latin inscriptions ══════
+// Additional raised tomb slabs in the floor
+[[0,-3],[0,2],[-1.8,-7],[1.8,-7]].forEach(function(fp){
+  var slab=new THREE.Mesh(new THREE.BoxGeometry(0.85,0.08,1.9),matMarble);
+  slab.position.set(fp[0],0.04,fp[1]); scene.add(slab);
+  // Incised cross
+  var fcV=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.02,0.55),matGold);
+  fcV.position.set(fp[0],0.09,fp[1]); scene.add(fcV);
+  var fcH=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.02,0.04),matGold);
+  fcH.position.set(fp[0],0.09,fp[1]-0.08); scene.add(fcH);
+});
+
+// ══ ARMOURED SKELETONS on floor ════════════════════
+var skullG  = new THREE.SphereGeometry(0.115,9,7);
+var ribG    = new THREE.CylinderGeometry(0.016,0.012,0.28,6);
+var boneG   = new THREE.CylinderGeometry(0.018,0.014,0.32,6);
+var pelvisG = new THREE.BoxGeometry(0.26,0.1,0.18);
+var plateG  = new THREE.BoxGeometry(0.34,0.38,0.05); // breastplate
+var helmG   = new THREE.SphereGeometry(0.135,9,7);
+var vambG   = new THREE.CylinderGeometry(0.052,0.044,0.28,8); // vambrace
+
+function addArmouredSkeleton(bx,bz,bodyRot){
+  var g=new THREE.Group();
+  g.position.set(bx,0,bz);
+  g.rotation.y=bodyRot;
+
+  // ── Skull ──
+  var skull=new THREE.Mesh(skullG,matMarble);
+  skull.position.set(0,0.115,0.28); skull.scale.set(1,1.1,1.05); g.add(skull);
+  // Jaw
+  var jaw=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.04,0.1),matMarble);
+  jaw.position.set(0,0.06,0.32); g.add(jaw);
+  // Eye sockets
+  [-0.04,0.04].forEach(function(ox){
+    var eye=new THREE.Mesh(new THREE.SphereGeometry(0.022,6,4),
+      matFloor);
+    eye.position.set(ox,0.12,0.38); g.add(eye);
+  });
+
+  // ── Helm — great helm style ──
+  var helm=new THREE.Mesh(helmG,matIron);
+  helm.position.set(0,0.22,0.28); helm.scale.set(1.08,1.15,1.12); g.add(helm);
+  // Helm slit
+  var slit=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.015,0.06),matGold);
+  slit.position.set(0,0.27,0.415); g.add(slit);
+  // Helm cross
+  var hcV=new THREE.Mesh(new THREE.BoxGeometry(0.008,0.06,0.015),matGold);
+  hcV.position.set(0,0.32,0.412); g.add(hcV);
+  var hcH=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.008,0.015),matGold);
+  hcH.position.set(0,0.33,0.412); g.add(hcH);
+
+  // ── Breastplate ──
+  var plate=new THREE.Mesh(plateG,matIron);
+  plate.position.set(0,0.19,0.025); g.add(plate);
+  // Cross on breastplate
+  var bpV=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.24,0.06),matWhite);
+  bpV.position.set(0,0.2,0.06); g.add(bpV);
+  var bpH=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.04,0.06),matWhite);
+  bpH.position.set(0,0.24,0.06); g.add(bpH);
+  // Shoulder pauldrons
+  [-0.22,0.22].forEach(function(ox){
+    var p=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,6),matIron);
+    p.position.set(ox,0.3,0.02); p.scale.set(0.9,0.65,0.8); g.add(p);
+  });
+
+  // ── Spine + ribs ──
+  for(var si=0;si<5;si++){
+    var sv=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.06,0.04),matMarble);
+    sv.position.set(0,0.08+si*0.09,-0.02); g.add(sv);
+  }
+  for(var ri=0;ri<4;ri++){
+    var ry2=0.12+ri*0.08;
+    [-1,1].forEach(function(side){
+      var rib2=new THREE.Mesh(ribG,matMarble);
+      rib2.position.set(side*0.1,ry2,0.0);
+      rib2.rotation.set(0,0,side*Math.PI/2+side*0.3);
+      g.add(rib2);
+    });
+  }
+  // Pelvis
+  var pelvis=new THREE.Mesh(pelvisG,matMarble);
+  pelvis.position.set(0,0.05,-0.02); g.add(pelvis);
+
+  // ── Arms — splayed out ──
+  [-1,1].forEach(function(side){
+    // Upper arm
+    var ua=new THREE.Mesh(boneG,matMarble);
+    ua.position.set(side*0.24,0.22,0);
+    ua.rotation.z=side*(Math.PI/2-0.3); g.add(ua);
+    // Vambrace (forearm armour)
+    var vamb=new THREE.Mesh(vambG,matIron);
+    vamb.position.set(side*0.44,0.1,0.1);
+    vamb.rotation.z=side*0.8; vamb.rotation.x=-0.4; g.add(vamb);
+    // Hand bones
+    var hand=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.04,0.1),matMarble);
+    hand.position.set(side*0.52,0.04,0.22); g.add(hand);
+  });
+
+  // ── Legs ──
+  [-0.1,0.1].forEach(function(ox){
+    // Thigh
+    var thigh=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.035,0.38,8),matMarble);
+    thigh.position.set(ox,-0.18,-0.02);
+    thigh.rotation.x=0.15+Math.random()*0.2; g.add(thigh);
+    // Greave (shin armour)
+    var greave=new THREE.Mesh(new THREE.CylinderGeometry(0.038,0.028,0.35,8),matIron);
+    greave.position.set(ox,-0.38,-0.05);
+    greave.rotation.x=0.1; g.add(greave);
+    // Foot
+    var foot=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.04,0.18),matIron);
+    foot.position.set(ox,-0.54,0.04); g.add(foot);
+  });
+
+  // ── Weapon in hand — sword or mace ──
+  if(Math.random()>0.4){
+    // Sword lying alongside
+    var sw2=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.72,0.015),matIron);
+    sw2.position.set(0.32,0.0,0.1); sw2.rotation.z=0.3; g.add(sw2);
+    var sg2=new THREE.Mesh(new THREE.BoxGeometry(0.24,0.04,0.02),matGold);
+    sg2.position.set(0.44,0.0,0.11); sg2.rotation.z=0.3; g.add(sg2);
+  }
+
+  scene.add(g);
+}
+
+// Place 5 armoured skeletons in the naves
+addArmouredSkeleton(-2.8, -4.5, -0.3);
+addArmouredSkeleton( 2.5, -3.0,  2.6);
+addArmouredSkeleton(-2.2,  2.5,  0.5);
+addArmouredSkeleton( 2.8,  4.5, -0.8);
+addArmouredSkeleton(-0.5, -7.5,  1.2);
+
+
+
+var matWhite=new THREE.MeshStandardMaterial({color:0xe8e0d0,roughness:0.78,metalness:0.0});
+// ══ WEAPONS ON WALLS ════════════════════════════════
+// Sword geometry (reused)
+var swordBladeGeo = new THREE.BoxGeometry(0.06, 0.88, 0.02);
+var swordGuardGeo = new THREE.BoxGeometry(0.32, 0.05, 0.025);
+var swordGripGeo  = new THREE.CylinderGeometry(0.022,0.028,0.24,8);
+var swordPommelGeo= new THREE.SphereGeometry(0.042,8,6);
+// Mace geometry
+var maceShaftGeo  = new THREE.CylinderGeometry(0.022,0.028,0.72,8);
+var maceFlangeGeo = new THREE.BoxGeometry(0.12,0.06,0.02);
+// Shield — Hospitaller heater shape approximated as box
+var shieldGeo     = new THREE.BoxGeometry(0.44,0.52,0.04);
+
+function addSword(x,y,z,ry,tilt){
+  var g=new THREE.Group();
+  g.position.set(x,y,z); g.rotation.y=ry; g.rotation.z=tilt||0;
+  var blade=new THREE.Mesh(swordBladeGeo,matIron); blade.position.y=0.22; g.add(blade);
+  var guard=new THREE.Mesh(swordGuardGeo,matIron); guard.position.y=-0.22; g.add(guard);
+  var grip=new THREE.Mesh(swordGripGeo,matMarble);  grip.position.y=-0.38; g.add(grip);
+  var pommel=new THREE.Mesh(swordPommelGeo,matGold); pommel.position.y=-0.52; g.add(pommel);
+  // Cross guard ends
+  [-0.14,0.14].forEach(function(ox){
+    var tip=new THREE.Mesh(new THREE.SphereGeometry(0.028,6,4),matGold);
+    tip.position.set(ox,-0.22,0); g.add(tip);
+  });
+  scene.add(g);
+}
+
+function addMace(x,y,z,ry,tilt){
+  var g=new THREE.Group();
+  g.position.set(x,y,z); g.rotation.y=ry; g.rotation.z=tilt||0;
+  var shaft=new THREE.Mesh(maceShaftGeo,matIron); g.add(shaft);
+  // Flanged head — 6 flanges
+  for(var fi=0;fi<6;fi++){
+    var fl=new THREE.Mesh(maceFlangeGeo,matIron);
+    fl.position.set(Math.cos(fi*Math.PI/3)*0.06,0.4,Math.sin(fi*Math.PI/3)*0.06);
+    fl.rotation.y=fi*Math.PI/3; g.add(fl);
+  }
+  var pommel2=new THREE.Mesh(swordPommelGeo,matGold); pommel2.position.y=-0.38; g.add(pommel2);
+  scene.add(g);
+}
+
+function addShield(x,y,z,ry){
+  var g=new THREE.Group();
+  g.position.set(x,y,z); g.rotation.y=ry;
+  var board=new THREE.Mesh(shieldGeo,matIron); g.add(board);
+  // White cross on black shield (Hospitaller)
+  var scV=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.36,0.05),
+    matWhite);
+  g.add(scV);
+  var scH=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.06,0.05),
+    matWhite);
+  g.add(scH);
+  // Rim
+  var rim=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.54,0.02),matGold);
+  rim.position.z=-0.03; g.add(rim);
+  scene.add(g);
+}
+
+// Left outer wall weapons
+var LW=-(4+0.6+0.08);
+addShield(LW, 2.2, -6.5, Math.PI/2);
+addSword( LW, 2.2, -6.0, Math.PI/2, -0.25);
+addSword( LW, 2.2, -5.6, Math.PI/2,  0.25);
+addMace(  LW, 2.2, -1.5, Math.PI/2, 0.1);
+addShield(LW, 2.2,  1.0, Math.PI/2);
+addSword( LW, 2.2,  1.5, Math.PI/2, -0.2);
+addSword( LW, 2.2,  1.9, Math.PI/2,  0.2);
+addMace(  LW, 2.2,  5.5, Math.PI/2, -0.1);
+addShield(LW, 2.2,  6.5, Math.PI/2);
+
+// Right outer wall weapons
+var RW2=4+0.6+0.08;
+addShield(RW2, 2.2, -6.5, -Math.PI/2);
+addSword( RW2, 2.2, -6.0, -Math.PI/2, -0.25);
+addSword( RW2, 2.2, -5.6, -Math.PI/2,  0.25);
+addMace(  RW2, 2.2, -1.5, -Math.PI/2, 0.1);
+addShield(RW2, 2.2,  1.0, -Math.PI/2);
+addSword( RW2, 2.2,  1.5, -Math.PI/2, -0.2);
+addSword( RW2, 2.2,  1.9, -Math.PI/2,  0.2);
+addMace(  RW2, 2.2,  5.5, -Math.PI/2, -0.1);
+addShield(RW2, 2.2,  6.5, -Math.PI/2);
+
+// End wall — above altar
+addSword(  -0.8, 3.8, -8.95, 0,  0.35);
+addSword(   0.8, 3.8, -8.95, 0, -0.35);
+addShield(  0.0, 3.4, -8.92, 0);
+
+// ══ DUST MOTES ═══════════════════════════════════
+var dustG=new THREE.BufferGeometry();
+var dustP=new Float32Array(180*3);
+var dustV=[];
+for(var di=0;di<180;di++){
+  dustP[di*3]  =(Math.random()-0.5)*12;
+  dustP[di*3+1]=Math.random()*(RH+1);
+  dustP[di*3+2]=(Math.random()-0.5)*NAVE_D;
+  dustV.push({vx:(Math.random()-0.5)*0.003,vy:(Math.random()-0.5)*0.002,vz:(Math.random()-0.5)*0.003});
+}
+dustG.setAttribute('position',new THREE.BufferAttribute(dustP,3));
+scene.add(new THREE.Points(dustG,new THREE.PointsMaterial({
+  color:0xd0a860,size:0.028,transparent:true,opacity:0.4,sizeAttenuation:true})));
+
+// ══ LIGHTS ═══════════════════════════════════════
+scene.add(new THREE.AmbientLight(0x140e08,0.35));
+var headLamp=new THREE.PointLight(0xffdd88,4.5,8,2);
+scene.add(headLamp);
+
+// ══ AUDIO ════════════════════════════════════════
+var audioCtx=null;
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  // Sacred drone — low organ-like tone
+  [55,110,165].forEach(function(freq,idx){
+    var o=audioCtx.createOscillator(),g=audioCtx.createGain(),f=audioCtx.createBiquadFilter();
+    f.type='lowpass'; f.frequency.value=freq*2;
+    o.type='sine'; o.frequency.value=freq;
+    g.gain.value=0.035-idx*0.008;
+    o.connect(f);f.connect(g);g.connect(audioCtx.destination);o.start();
+  });
+  // Distant drip
+  function drip(){
+    if(!audioCtx) return;
+    var now=audioCtx.currentTime;
+    var o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(900+Math.random()*400,now);
+    o.frequency.exponentialRampToValueAtTime(200,now+0.18);
+    g.gain.setValueAtTime(0.08,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.22);
+    o.connect(g);g.connect(audioCtx.destination);o.start(now);o.stop(now+0.25);
+    setTimeout(drip,3000+Math.random()*8000);
+  }
+  setTimeout(drip,2000);
+}
+function playStep(){
+  if(!audioCtx) return;
+  var now=audioCtx.currentTime;
+  var buf=audioCtx.createBuffer(1,audioCtx.sampleRate*0.08,audioCtx.sampleRate);
+  var d=buf.getChannelData(0);
+  for(var n=0;n<d.length;n++) d[n]=(Math.random()*2-1)*Math.pow(1-n/d.length,4);
+  var src=audioCtx.createBufferSource(),g=audioCtx.createGain(),f=audioCtx.createBiquadFilter();
+  f.type='bandpass'; f.frequency.value=200+Math.random()*80; f.Q.value=1.2;
+  g.gain.value=0.1;
+  src.buffer=buf;src.connect(f);f.connect(g);g.connect(audioCtx.destination);src.start(now);
+}
+document.addEventListener('keydown',function(){initAudio();},{once:true});
+
+// ══ COLLISION ════════════════════════════════════
+var PLAYER_R=0.35;
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function resolveRoom(px,pz){
+  // Outer walls
+  px=clamp(px,-(NAVE_W+0.6)+PLAYER_R,(NAVE_W+0.6)-PLAYER_R);
+  pz=clamp(pz,-NAVE_D/2+PLAYER_R,NAVE_D/2-PLAYER_R);
+  // Central columns
+  for(var cz2=-7;cz2<=7;cz2+=3.5){
+    [-0.6,0.6].forEach(function(cx5){
+      var dx=px-cx5,dz=pz-cz2,dist=Math.sqrt(dx*dx+dz*dz);
+      if(dist<0.34+PLAYER_R){var push=(0.34+PLAYER_R-dist)/dist;px+=dx*push;pz+=dz*push;}
+    });
+  }
+  // Sarcophagi at walls — thin collision
+  sarcData.forEach(function(sd){
+    if(Math.abs(px-sd[0])<0.52+PLAYER_R && Math.abs(pz-sd[1])<0.3+PLAYER_R){
+      var dx2=px-sd[0],dz2=pz-sd[1];
+      var ox=0.52+PLAYER_R-Math.abs(dx2), oz=0.3+PLAYER_R-Math.abs(dz2);
+      if(ox<oz) px+=dx2>0?ox:-ox; else pz+=dz2>0?oz:-oz;
+    }
+  });
+  // Altar
+  if(Math.abs(px)<1.5+PLAYER_R && pz<-NAVE_D/2+3.5+PLAYER_R){
+    pz=-NAVE_D/2+3.5+PLAYER_R;
+  }
+  return {x:px,z:pz};
+}
+
+// ══ FADE ════════════════════════════════════════
+var fd=document.createElement('div');
+fd.style.cssText='position:absolute;top:0;left:0;width:100%;height:100%;background:#000;pointer-events:none;transition:opacity 3s ease';
+document.body.appendChild(fd);
+setTimeout(function(){fd.style.opacity='0';},100);
+
+// ══ ANIMATE ═════════════════════════════════════
+var clock=new THREE.Clock(), elapsed=0;
+
+function animate(){
+  requestAnimationFrame(animate);
+  var dt=Math.min(clock.getDelta(),0.05);
+  elapsed+=dt;
+
+  // Turn
+  var TURN=1.8;
+  if(keys['KeyQ']||keys['ArrowLeft'])  yaw+=TURN*dt;
+  if(keys['KeyE']||keys['ArrowRight']) yaw-=TURN*dt;
+
+  // Move
+  var fwd  =new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  var right=new THREE.Vector3( Math.cos(yaw),0,-Math.sin(yaw));
+  var mx=0,mz=0,moving=false;
+  if(keys['KeyW']||keys['ArrowUp'])  {mx+=fwd.x*SPEED*dt;mz+=fwd.z*SPEED*dt;moving=true;}
+  if(keys['KeyS']||keys['ArrowDown']){mx-=fwd.x*SPEED*dt;mz-=fwd.z*SPEED*dt;moving=true;}
+  if(keys['KeyA']){mx-=right.x*SPEED*dt;mz-=right.z*SPEED*dt;moving=true;}
+  if(keys['KeyD']){mx+=right.x*SPEED*dt;mz+=right.z*SPEED*dt;moving=true;}
+  if(keys['Space'] && onGround){velY=JUMP_V; onGround=false;}
+  if(moving){
+    var r=resolveRoom(playerX+mx,playerZ+mz);
+    playerX=r.x; playerZ=r.z;
+    stepT+=dt; footT+=dt;
+    if(footT>0.46){footT=0;playStep();}
+  } else {stepT=0;footT=0.38;}
+
+  // Jump physics
+  if(!onGround){
+    velY+=GRAVITY*dt;
+    groundY+=velY*dt;
+    if(groundY<=0){groundY=0;velY=0;onGround=true;}
+  }
+  var tBob=(moving&&onGround)?Math.sin(stepT*5.5)*0.05:0;
+  camBob+=(tBob-camBob)*0.18;
+  var EYE=1.68+camBob+groundY;
+  camera.position.set(playerX,EYE,playerZ);
+  camera.rotation.order='YXZ';
+  camera.rotation.y=yaw; camera.rotation.x=pitch;
+  headLamp.position.set(playerX,EYE,playerZ);
+
+  // Candle / torch flicker
+  for(var ci=0;ci<candleLights.length;ci++){
+    var cd=candleLights[ci];
+    var tt=elapsed+cd.ph;
+    var flk=1+Math.sin(tt*5.8)*0.22+Math.sin(tt*12.3)*0.1+Math.sin(tt*21+ci)*0.06;
+    cd.L.intensity=cd.base*flk;
+    if(cd.fl){cd.fl.scale.y=1+Math.sin(tt*6.8)*0.18;cd.fl.scale.x=1+Math.sin(tt*9)*0.1;}
+  }
+
+  // Dust
+  for(var di2=0;di2<180;di2++){
+    dustP[di2*3]  +=dustV[di2].vx; dustP[di2*3+1]+=dustV[di2].vy; dustP[di2*3+2]+=dustV[di2].vz;
+    if(dustP[di2*3+1]>RH+1)dustP[di2*3+1]=0;
+    if(dustP[di2*3+1]<0)   dustP[di2*3+1]=RH;
+  }
+  dustG.attributes.position.needsUpdate=true;
+
+  renderer.render(scene,camera);
+}
+animate();
+
+window.addEventListener('resize',function(){
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+}catch(e){
+  document.body.innerHTML='<div style="color:red;padding:20px;font-family:monospace;white-space:pre">'+e.message+'\n'+e.stack+'</div>';
+}
+</script>
+</body>
+</html>
